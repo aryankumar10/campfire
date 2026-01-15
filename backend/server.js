@@ -1,57 +1,113 @@
-// Libraries
-import 'dotenv/config';
 import express from 'express';
-import http from 'http';
+import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 
-import logger from './utils/logger.js';
-import {
-    registerSocketHandlers,
-    listRoomsHandler,
-    createRoomHandler,
-    joinRoomDebugHandler,
-    getMessagesHandler,
-} from './controllers/chatController.js';
-
-// App initialization
 const app = express();
-const server = http.createServer(app);
+const server = createServer(app);
 
+// Configure CORS
+app.use(cors());
 
-
-
-// Middleware
-app.use(cors({
-    origin: '*',
-    methods: ['GET', 'POST'],
-}));
-app.use(express.json());
-
-// Socket.io setup for chat
 const io = new Server(server, {
-    cors: {
-        origin: '*',
-        methods: ['GET', 'POST'],
-    },
+  cors: {
+    origin: "http://localhost:3000", // React app URL
+    methods: ["GET", "POST"]
+  }
 });
 
-// Register socket handlers from controller
-registerSocketHandlers(io);
+// Store active rooms and their message histories (in production, use database)
+// rooms: Map<roomId, { messages: Array }>
+const rooms = new Map();
 
+io.on('connection', (socket) => {
+  console.log('New client connected:', socket.id);
 
-// Room endpoints (handlers live in controllers/chatController.js)
-app.get('/rooms', listRoomsHandler);
-app.post('/rooms', createRoomHandler(io));
-app.post('/rooms/:id/join', joinRoomDebugHandler);
-app.get('/rooms/:id/messages', getMessagesHandler);
+  // Create room
+  socket.on('createRoom', ({ roomId }, callback) => {
+    if (!roomId || typeof roomId !== 'string' || roomId.trim() === '') {
+      if (typeof callback === 'function') callback({ ok: false, error: 'Invalid room id' });
+      return;
+    }
+    roomId = roomId.trim();
+    if (rooms.has(roomId)) {
+      if (typeof callback === 'function') callback({ ok: false, error: 'Room already exists' });
+      return;
+    }
+    rooms.set(roomId, { messages: [] });
+    console.log(`Room created: ${roomId}`);
+    // notify all clients a room was created
+    io.emit('roomCreated', { roomId });
+    if (typeof callback === 'function') callback({ ok: true, roomId });
+  });
 
-app.get('/', (req, res) => {
-    res.send("Welcome to campfire");
+  // Join room - requires the room to already exist
+  socket.on('joinRoom', ({ roomId, username }, callback) => {
+    if (!roomId || !rooms.has(roomId)) {
+      if (typeof callback === 'function') callback({ ok: false, error: 'Room not found' });
+      socket.emit('roomNotFound', { roomId });
+      return;
+    }
+    socket.join(roomId);
+    console.log(`${username} joined room: ${roomId}`);
+
+    // Send existing message history to the joining socket
+    const history = rooms.get(roomId).messages || [];
+    socket.emit('roomJoined', { roomId, history });
+
+    // Notify others in room
+    socket.to(roomId).emit('message', {
+      username: 'System',
+      message: `${username} joined the room`,
+      timestamp: new Date()
+    });
+
+    if (typeof callback === 'function') callback({ ok: true, roomId });
+  });
+
+  // Handle chat messages
+  socket.on('chatMessage', ({ roomId, message, username }) => {
+    if (!roomId || !rooms.has(roomId)) {
+      socket.emit('error', { error: 'Room not found' });
+      return;
+    }
+
+    const messageData = {
+      username,
+      message,
+      timestamp: new Date()
+    };
+
+    // store in room history
+    const room = rooms.get(roomId);
+    room.messages = room.messages || [];
+    room.messages.push(messageData);
+
+    // Broadcast to all users in the room (including sender)
+    io.to(roomId).emit('message', messageData);
+
+    console.log(`Message in ${roomId} from ${username}: ${message}`);
+  });
+
+  // Leave room
+  socket.on('leaveRoom', ({ roomId, username }) => {
+    socket.leave(roomId);
+    console.log(`Client left room: ${roomId}`);
+    socket.to(roomId).emit('message', {
+      username: 'System',
+      message: `${username || 'A user'} left the room`,
+      timestamp: new Date()
+    });
+  });
+
+  // Disconnect
+  socket.on('disconnect', () => {
+    console.log('Client disconnected:', socket.id);
+  });
 });
-
 
 const PORT = process.env.PORT || 5000;
+
 server.listen(PORT, () => {
-    logger.success(`SERVER RUNNING ON PORT ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
