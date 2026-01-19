@@ -24,7 +24,7 @@ mongoose.connect(process.env.MONGO_URI)
 // frontend route
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:3000", // React app URL
+    origin: `http://localhost:${process.env.REACT_APP_PORT}`, // React app URL
     methods: ["GET", "POST"]
   }
 });

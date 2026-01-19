@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { MessageSquare, Video, Github, ListTodo, Folder, LogOut, Menu, X, Send, Users, Hash } from 'lucide-react';
 import io from 'socket.io-client';
 
+const PORT = process.env.REACT_APP_BACKEND_PORT || 5000;
+
 // Test users
 const TEST_USERS = [
   { username: 'student1', password: 'pass123', name: 'Alice Johnson' },
@@ -42,7 +44,7 @@ const CampfireApp = () => {
   useEffect(() => {
     if (isLoggedIn) {
       // Connect to socket.io server (change URL to your backend)
-      const newSocket = io('http://localhost:8000');
+      const newSocket = io(`http://localhost:${PORT}`);
       // const newSocket = io('http://localhost:5000');
       setSocket(newSocket);
 
@@ -75,7 +77,7 @@ const CampfireApp = () => {
     setError('');
     
     try {
-      const response = await fetch('http://localhost:8000/api/auth/login', {
+      const response = await fetch(`http://localhost:${PORT}/api/auth/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -100,7 +102,7 @@ const CampfireApp = () => {
     } 
     catch (err) {
       console.error('Login error:', err);
-      setError(`Failed to connect to server. Trying to connect to port :${8000}`);
+      setError(`Failed to connect to server. Trying to connect to port :${PORT}`);
     }
   };
 
