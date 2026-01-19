@@ -43,6 +43,7 @@ const CampfireApp = () => {
     if (isLoggedIn) {
       // Connect to socket.io server (change URL to your backend)
       const newSocket = io('http://localhost:8000');
+      // const newSocket = io('http://localhost:5000');
       setSocket(newSocket);
 
       newSocket.on('message', (msg) => {
@@ -69,36 +70,45 @@ const CampfireApp = () => {
     }
   }, [isLoggedIn]);
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
-    const user = TEST_USERS.find(
-      u => u.username === username && u.password === password
-    );
+    setError('');
     
-    if (user) {
-      setIsLoggedIn(true);
-      setCurrentUser(user);
-      setError('');
-      // Persist session for 5 minutes
-      try {
-        const expiresAt = Date.now() + 5 * 60 * 1000;
-        localStorage.setItem('campfireAuth', JSON.stringify({ username: user.username, expiresAt }));
-        if (logoutTimerRef.current) clearTimeout(logoutTimerRef.current);
-        logoutTimerRef.current = setTimeout(() => {
-          handleLogout();
-        }, 5 * 60 * 1000);
-      } catch (e) {
-        // ignore storage errors
+    try {
+      const response = await fetch('http://localhost:8000/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ username, password }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setIsLoggedIn(true);
+        setCurrentUser(data.user); // Contains { name, username, id } from backend
+        
+        // 2. Save Token & User to LocalStorage (for page refreshes)
+        localStorage.setItem('token', data.token);
+        localStorage.setItem('user', JSON.stringify(data.user));
+
       }
-    } else {
-      setError('Invalid username or password');
+      else {
+        setError(data.message || 'Login failed');
+      }
+    } 
+    catch (err) {
+      console.error('Login error:', err);
+      setError(`Failed to connect to server. Trying to connect to port :${8000}`);
     }
   };
 
   const handleLogout = () => {
     if (socket) {
-      socket.close();
+      socket.disconnect();
     }
+    
     setIsLoggedIn(false);
     setCurrentUser(null);
     setUsername('');
@@ -106,11 +116,9 @@ const CampfireApp = () => {
     setActiveFeature('chat');
     setCurrentRoom('');
     setMessages([]);
-    if (logoutTimerRef.current) {
-      clearTimeout(logoutTimerRef.current);
-      logoutTimerRef.current = null;
-    }
-    try { localStorage.removeItem('campfireAuth'); } catch (e) {}
+    
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
   };
 
   const handleCreateOrJoinRoom = () => {
@@ -183,31 +191,20 @@ const CampfireApp = () => {
 
   // restore session on mount if valid
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem('campfireAuth');
-      if (raw) {
-        const data = JSON.parse(raw);
-        if (data && data.username && data.expiresAt && Date.now() < data.expiresAt) {
-          const user = TEST_USERS.find(u => u.username === data.username);
-          if (user) {
-            setIsLoggedIn(true);
-            setCurrentUser(user);
-            const remaining = data.expiresAt - Date.now();
-            if (logoutTimerRef.current) clearTimeout(logoutTimerRef.current);
-            logoutTimerRef.current = setTimeout(() => {
-              handleLogout();
-            }, remaining);
-          } else {
-            localStorage.removeItem('campfireAuth');
-          }
-        } else {
-          localStorage.removeItem('campfireAuth');
-        }
+    const token = localStorage.getItem('token');
+    const savedUser = localStorage.getItem('user');
+
+    if (token && savedUser) {
+      try {
+        const user = JSON.parse(savedUser);
+        setIsLoggedIn(true);
+        setCurrentUser(user);
+      } 
+      catch (e) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
       }
-    } catch (e) {
-      try { localStorage.removeItem('campfireAuth'); } catch (_) {}
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (!isLoggedIn) {
