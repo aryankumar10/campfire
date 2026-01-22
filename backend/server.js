@@ -6,6 +6,7 @@ import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 
 import authRoutes from './routes/authRoutes.js';
+import Room from './models/Room.js';
 
 dotenv.config();
 const app = express();
@@ -30,85 +31,103 @@ const io = new Server(server, {
 });
 
 const rooms = new Map();
+const activeRooms = new Map();
 
 io.on('connection', (socket) => {
   console.log('New client connected:', socket.id);
 
   // Create room
-  socket.on('createRoom', ({ roomId }, callback) => {
-    if (!roomId || typeof roomId !== 'string' || roomId.trim() === '') {
-      if (typeof callback === 'function') callback({ ok: false, error: 'Invalid room id' });
-      return;
+  socket.on('createRoom', async ({ roomId }, callback) => {
+    try {
+      if (!roomId || roomId.trim() === '') {
+        return callback?.({ ok: false, error: 'Invalid room ID' });
+      }
+
+      // Check DB first
+      const existingRoom = await Room.findOne({ name: roomId });
+      if (existingRoom) {
+        return callback?.({ ok: false, error: 'Room already exists in database' });
+      }
+
+      // Save to DB
+      const newRoom = new Room({ name: roomId });
+      await newRoom.save();
+      console.log(`✅ Room created in DB: ${roomId}`);
+
+      // Notify clients
+      io.emit('roomCreated', { roomId });
+      callback?.({ ok: true, roomId });
+
+    } catch (err) {
+      console.error(err);
+      callback?.({ ok: false, error: 'Failed to create room' });
     }
-    roomId = roomId.trim();
-    if (rooms.has(roomId)) {
-      if (typeof callback === 'function') callback({ ok: false, error: 'Room already exists' });
-      return;
-    }
-    rooms.set(roomId, { messages: [] });
-    console.log(`Room created: ${roomId}`);
-    // notify all clients a room was created
-    io.emit('roomCreated', { roomId });
-    if (typeof callback === 'function') callback({ ok: true, roomId });
   });
 
   // Join room - requires the room to already exist
-  socket.on('joinRoom', ({ roomId, username }, callback) => {
-    if (!roomId || !rooms.has(roomId)) {
-      if (typeof callback === 'function') callback({ ok: false, error: 'Room not found' });
-      socket.emit('roomNotFound', { roomId });
-      return;
+  socket.on('joinRoom', async ({ roomId, username }, callback) => {
+    try {
+      // Check DB to ensure room actually exists
+      const roomInDb = await Room.findOne({ name: roomId });
+
+      if (!roomInDb) {
+        socket.emit('roomNotFound', { roomId });
+        return callback?.({ ok: false, error: 'Room not found in database' });
+      }
+
+      if (!activeRooms.has(roomId)) {
+        activeRooms.set(roomId, { messages: [] });
+      }
+
+      socket.join(roomId);
+      console.log(`${username} joined room: ${roomId}`);
+
+      // Send temporary history from memory
+      const history = activeRooms.get(roomId).messages || [];
+      socket.emit('roomJoined', { roomId, history });
+
+      socket.to(roomId).emit('message', {
+        username: 'System',
+        message: `${username} joined the room`,
+        timestamp: new Date()
+      });
+
+      callback?.({ ok: true, roomId });
+
+    } catch (err) {
+      console.error(err);
+      callback?.({ ok: false, error: 'Join error' });
     }
-    socket.join(roomId);
-    console.log(`${username} joined room: ${roomId}`);
-
-    // Send existing message history to the joining socket
-    const history = rooms.get(roomId).messages || [];
-    socket.emit('roomJoined', { roomId, history });
-
-    // Notify others in room
-    socket.to(roomId).emit('message', {
-      username: 'System',
-      message: `${username} joined the room`,
-      timestamp: new Date()
-    });
-
-    if (typeof callback === 'function') callback({ ok: true, roomId });
   });
 
   // Handle chat messages
   socket.on('chatMessage', ({ roomId, message, username }) => {
-    if (!roomId || !rooms.has(roomId)) {
-      socket.emit('error', { error: 'Room not found' });
-      return;
+    if (!activeRooms.has(roomId)) {
+        // Edge case: If server restarts while user is connected
+        // For now, simple error:
+        return; 
     }
-
-    const messageData = {
-      username,
-      message,
-      timestamp: new Date()
-    };
-
-    // store in room history
-    const room = rooms.get(roomId);
-    room.messages = room.messages || [];
-    room.messages.push(messageData);
-
-    // Broadcast to all users in the room (including sender)
+    const messageData = { username, message, timestamp: new Date() };
+    activeRooms.get(roomId).messages.push(messageData);
     io.to(roomId).emit('message', messageData);
-
-    console.log(`Message in ${roomId} from ${username}: ${message}`);
   });
 
   // Leave room
   socket.on('leaveRoom', ({ roomId, username }) => {
     socket.leave(roomId);
     console.log(`Client left room: ${roomId}`);
-    socket.to(roomId).emit('message', {
+
+    const systemMessage = {
       username: 'System',
       message: `${username || 'A user'} left the room`,
       timestamp: new Date()
-    });
+    };
+
+    if (activeRooms.has(roomId)) {
+      activeRooms.get(roomId).messages.push(systemMessage);
+    }
+    socket.to(roomId).emit('message', systemMessage);
+
   });
 
   // Disconnect
