@@ -6,7 +6,9 @@ import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 
 import authRoutes from './routes/authRoutes.js';
+import User from './models/User.js';
 import Room from './models/Room.js';
+import Message from './models/Message.js';
 
 dotenv.config();
 const app = express();
@@ -30,8 +32,6 @@ const io = new Server(server, {
   }
 });
 
-const rooms = new Map();
-const activeRooms = new Map();
 
 io.on('connection', (socket) => {
   console.log('New client connected:', socket.id);
@@ -75,17 +75,23 @@ io.on('connection', (socket) => {
         return callback?.({ ok: false, error: 'Room not found in database' });
       }
 
-      if (!activeRooms.has(roomId)) {
-        activeRooms.set(roomId, { messages: [] });
-      }
-
       socket.join(roomId);
-      console.log(`${username} joined room: ${roomId}`);
 
-      // Send temporary history from memory
-      const history = activeRooms.get(roomId).messages || [];
+      // Fetch message history
+      const messages = await Message.find({room_id: roomInDb._id})
+        .sort({createdAt: 1})
+        .populate('sender', 'username name');
+      
+      // Format for Frontend
+      const history = messages.map(msg => ({
+        username: msg.sender ? msg.sender.username : 'Unknown',
+        message: msg.content,
+        timestamp: msg.createdAt
+      }));
+
       socket.emit('roomJoined', { roomId, history });
 
+      // Notify others
       socket.to(roomId).emit('message', {
         username: 'System',
         message: `${username} joined the room`,
@@ -93,23 +99,42 @@ io.on('connection', (socket) => {
       });
 
       callback?.({ ok: true, roomId });
-
-    } catch (err) {
+    } 
+    catch (err) {
       console.error(err);
       callback?.({ ok: false, error: 'Join error' });
     }
   });
 
   // Handle chat messages
-  socket.on('chatMessage', ({ roomId, message, username }) => {
-    if (!activeRooms.has(roomId)) {
-        // Edge case: If server restarts while user is connected
-        // For now, simple error:
-        return; 
+  socket.on('chatMessage', async ({ roomId, message, username }) => {
+    try {
+      const room = await Room.findOne({ name: roomId });
+      const user = await User.findOne({ username });
+      if (!room || !user) {
+        return;   // return error msg
+      }
+
+      // Save msg to DB
+      const newMsg = new Message({
+        room_id: room._id,
+        sender: user._id,
+        content: message,
+        project: room.project // null for non project rooms
+      });
+      await newMsg.save();
+
+      // Send to room
+      const messageData = {
+        username: user.username,
+        message: message,
+        timestamp: newMsg.createdAt
+      };
+      io.to(roomId).emit('message', messageData);
+    } 
+    catch (err) {
+      console.error("Message Error:", err);
     }
-    const messageData = { username, message, timestamp: new Date() };
-    activeRooms.get(roomId).messages.push(messageData);
-    io.to(roomId).emit('message', messageData);
   });
 
   // Leave room
@@ -122,10 +147,6 @@ io.on('connection', (socket) => {
       message: `${username || 'A user'} left the room`,
       timestamp: new Date()
     };
-
-    if (activeRooms.has(roomId)) {
-      activeRooms.get(roomId).messages.push(systemMessage);
-    }
     socket.to(roomId).emit('message', systemMessage);
 
   });
