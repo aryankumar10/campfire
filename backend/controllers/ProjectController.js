@@ -1,5 +1,7 @@
 import Project from '../models/Project.js';
 import Room from '../models/Room.js';
+import User from '../models/User.js';
+import Message from '../models/Message.js';
 
 export const createProject = async (req, res) => {
   try {
@@ -59,6 +61,98 @@ export const createRoomInProject = async (req, res) => {
     });
     const savedRoom = await newRoom.save();
     res.status(201).json(savedRoom);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Update project details (only Owner or project creator)
+export const updateProject = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const project = await Project.findById(id);
+    if (!project) return res.status(404).json({ message: 'Project not found' });
+
+    // Only owner can update
+    const isOwner = project.created_by && project.created_by.toString() === req.user.id;
+    if (!isOwner) return res.status(403).json({ message: 'Unauthorized' });
+
+    const { title, description, deadline, zoom_link } = req.body;
+    if (title !== undefined) project.title = title;
+    if (description !== undefined) project.description = description;
+    if (deadline !== undefined) project.deadline = deadline;
+    if (zoom_link !== undefined) project.zoom_link = zoom_link;
+
+    const updated = await project.save();
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Delete a project and its associated rooms/messages (only Owner)
+export const deleteProject = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const project = await Project.findById(id);
+    if (!project) return res.status(404).json({ message: 'Project not found' });
+
+    const isOwner = project.created_by && project.created_by.toString() === req.user.id;
+    if (!isOwner) return res.status(403).json({ message: 'Unauthorized' });
+
+    // Remove related rooms and messages
+    await Room.deleteMany({ project: project._id });
+    await Message.deleteMany({ project: project._id });
+
+    await project.remove();
+    res.json({ message: 'Project deleted' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Add a member to a project (only Owner)
+export const addMember = async (req, res) => {
+  try {
+    const { id } = req.params; // project id
+    const { userId, role } = req.body;
+
+    const project = await Project.findById(id);
+    if (!project) return res.status(404).json({ message: 'Project not found' });
+
+    const isOwner = project.created_by && project.created_by.toString() === req.user.id;
+    if (!isOwner) return res.status(403).json({ message: 'Unauthorized' });
+
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const already = project.members.some(m => m.user.toString() === userId);
+    if (already) return res.status(400).json({ message: 'User already a member' });
+
+    project.members.push({ user: userId, role: role || 'Member' });
+    await project.save();
+    const populated = await Project.findById(id).populate('members.user', 'username name');
+    res.status(201).json(populated);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Remove a member from a project (Owner or self)
+export const removeMember = async (req, res) => {
+  try {
+    const { id, memberId } = req.params; // project id, member user id
+    const project = await Project.findById(id);
+    if (!project) return res.status(404).json({ message: 'Project not found' });
+
+    const isOwner = project.created_by && project.created_by.toString() === req.user.id;
+    const isSelf = req.user.id === memberId;
+    if (!isOwner && !isSelf) return res.status(403).json({ message: 'Unauthorized' });
+
+    project.members = project.members.filter(m => m.user.toString() !== memberId);
+    await project.save();
+    const populated = await Project.findById(id).populate('members.user', 'username name');
+    res.json(populated);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

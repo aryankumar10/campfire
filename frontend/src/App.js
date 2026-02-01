@@ -221,6 +221,15 @@ const CampfireApp = () => {
 
   const handleCreateProject = async () => {
     const token = localStorage.getItem('token');
+    if (!token) {
+      alert('You must be logged in to create a project');
+      return;
+    }
+    if (!newProjectTitle || newProjectTitle.trim().length < 3) {
+      alert('Project title must be at least 3 characters');
+      return;
+    }
+
     try {
       const response = await fetch(`http://localhost:${PORT}/api/projects`, {
         method: 'POST',
@@ -228,16 +237,21 @@ const CampfireApp = () => {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ title: newProjectTitle, description: newProjectDesc })
+        body: JSON.stringify({ title: newProjectTitle.trim(), description: newProjectDesc })
       });
+      const data = await response.json();
       if (response.ok) {
         setShowCreateProjectModal(false);
         setNewProjectTitle('');
         setNewProjectDesc('');
         fetchProjects();
+      } else {
+        console.error('Create project failed:', data);
+        alert(data.message || 'Failed to create project');
       }
     } catch (err) {
       console.error('Create project error:', err);
+      alert('Failed to create project');
     }
   };
 
@@ -594,17 +608,122 @@ const CampfireApp = () => {
             </>
           )}
           
-          {activeFeature !== 'chat' && (
-            <div className="bg-white rounded-xl shadow-lg p-12 max-w-2xl mx-auto text-center">
-              {(() => {
-                const Icon = features.find(f => f.id === activeFeature)?.icon;
-                return Icon && <Icon className="w-20 h-20 text-gray-400 mx-auto mb-4" />;
-              })()}
-              <h2 className="text-2xl font-bold text-gray-800 mb-2">Coming Soon</h2>
-              <p className="text-gray-600">
-                This feature is currently under development. Stay tuned!
-              </p>
+          {activeFeature === 'projects' ? (
+            <div className="bg-white rounded-xl shadow-lg p-6 max-w-6xl mx-auto h-full flex">
+              <div className="w-80 border-r border-gray-100 pr-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold">Projects</h3>
+                  <button
+                    onClick={() => setShowCreateProjectModal(true)}
+                    className="px-3 py-1 bg-blue-500 text-white rounded-lg text-sm"
+                  >
+                    New
+                  </button>
+                </div>
+
+                <div className="space-y-3 overflow-y-auto max-h-[60vh] pr-2">
+                  {projects.length === 0 && (
+                    <div className="text-sm text-gray-500">No projects yet</div>
+                  )}
+                  {projects.map((p) => (
+                    <button
+                      key={p._id}
+                      onClick={() => fetchProjectDetails(p._id)}
+                      className={`w-full text-left p-3 rounded-lg hover:bg-gray-50 transition flex items-center justify-between ${selectedProject && selectedProject._id === p._id ? 'bg-gray-100' : ''}`}
+                    >
+                      <div>
+                        <div className="font-medium text-gray-800">{p.title}</div>
+                        <div className="text-xs text-gray-500 truncate">{p.description}</div>
+                      </div>
+                      <div className="text-xs text-gray-400">{(new Date(p.createdAt)).toLocaleDateString()}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex-1 p-6">
+                {!selectedProject ? (
+                  <div className="h-full flex flex-col items-center justify-center text-center">
+                    <Folder className="w-16 h-16 text-gray-400 mb-4" />
+                    <h2 className="text-xl font-bold mb-2">No project selected</h2>
+                    <p className="text-gray-600 mb-6">Pick a project from the left or create a new one.</p>
+                    <button
+                      onClick={() => setShowCreateProjectModal(true)}
+                      className="px-6 py-3 bg-blue-500 text-white rounded-lg"
+                    >
+                      Create Project
+                    </button>
+                  </div>
+                ) : (
+                  <div className="h-full flex flex-col">
+                    <div className="flex items-start justify-between mb-4">
+                      <div>
+                        <h2 className="text-2xl font-bold">{selectedProject.title}</h2>
+                        <p className="text-sm text-gray-500">{selectedProject.description}</p>
+                      </div>
+                      <div className="space-x-2">
+                        <button
+                          onClick={() => setSelectedProject(null)}
+                          className="px-3 py-1 border rounded-lg text-sm"
+                        >
+                          Back
+                        </button>
+                        <button
+                          onClick={() => setShowCreateRoomModal(true)}
+                          className="px-3 py-1 bg-green-500 text-white rounded-lg text-sm"
+                        >
+                          New Room
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto">
+                      <h3 className="text-lg font-semibold mb-2">Rooms</h3>
+                      {(!selectedProject.rooms || selectedProject.rooms.length === 0) && (
+                        <div className="text-sm text-gray-500 mb-4">No rooms yet for this project.</div>
+                      )}
+                      <div className="space-y-3">
+                        {selectedProject.rooms && selectedProject.rooms.map((r) => (
+                          <div key={r._id} className="p-3 border rounded-lg flex items-center justify-between">
+                            <div>
+                              <div className="font-medium">{r.name}</div>
+                              <div className="text-xs text-gray-400">Created: {(new Date(r.createdAt)).toLocaleString()}</div>
+                            </div>
+                            <div className="space-x-2">
+                              <button
+                                onClick={() => handleJoinProjectRoom(r._id)}
+                                className="px-3 py-1 bg-blue-500 text-white rounded-lg text-sm"
+                              >
+                                Join
+                              </button>
+                              <button
+                                onClick={() => { navigator.clipboard?.writeText(r._id); }}
+                                className="px-3 py-1 border rounded-lg text-sm"
+                              >
+                                Copy ID
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
+          ) : (
+            activeFeature !== 'chat' && (
+              <div className="bg-white rounded-xl shadow-lg p-12 max-w-2xl mx-auto text-center">
+                {(() => {
+                  const Icon = features.find(f => f.id === activeFeature)?.icon;
+                  return Icon && <Icon className="w-20 h-20 text-gray-400 mx-auto mb-4" />;
+                })()}
+                <h2 className="text-2xl font-bold text-gray-800 mb-2">Coming Soon</h2>
+                <p className="text-gray-600">
+                  This feature is currently under development. Stay tuned!
+                </p>
+              </div>
+            )
           )}
         </div>
       </main>
@@ -646,6 +765,73 @@ const CampfireApp = () => {
                 className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition"
               >
                 {modalMode === 'create' ? 'Create' : 'Join'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Create Project Modal */}
+      {showCreateProjectModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md">
+            <h3 className="text-xl font-bold text-gray-800 mb-4">Create Project</h3>
+            <p className="text-gray-600 mb-4 text-sm">Provide a title and optional description for your project.</p>
+            <input
+              type="text"
+              value={newProjectTitle}
+              onChange={(e) => setNewProjectTitle(e.target.value)}
+              placeholder="Project Title"
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none mb-3"
+            />
+            <textarea
+              value={newProjectDesc}
+              onChange={(e) => setNewProjectDesc(e.target.value)}
+              placeholder="Description (optional)"
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none mb-4"
+            />
+            <div className="flex space-x-3">
+              <button
+                onClick={() => { setShowCreateProjectModal(false); setNewProjectTitle(''); setNewProjectDesc(''); }}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateProject}
+                className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition"
+              >
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Room in Project Modal */}
+      {showCreateRoomModal && selectedProject && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md">
+            <h3 className="text-xl font-bold text-gray-800 mb-4">Create Room in {selectedProject.title}</h3>
+            <p className="text-gray-600 mb-4 text-sm">Enter a name for the room (will be visible to project members).</p>
+            <input
+              type="text"
+              value={newRoomName}
+              onChange={(e) => setNewRoomName(e.target.value)}
+              placeholder="Room name"
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none mb-4"
+            />
+            <div className="flex space-x-3">
+              <button
+                onClick={() => { setShowCreateRoomModal(false); setNewRoomName(''); }}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateRoomInProject}
+                className="flex-1 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition"
+              >
+                Create Room
               </button>
             </div>
           </div>
