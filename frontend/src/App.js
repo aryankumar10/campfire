@@ -167,7 +167,7 @@ const CampfireApp = () => {
 
   const handleSendMessage = () => {
     if (message.trim() && socket && currentRoom) {
-      socket.emit('chatMessage', { roomId: currentRoom, message: message.trim(), username: currentUser.name });
+      socket.emit('chatMessage', { roomId: currentRoom, message: message.trim(), username: currentUser.username });
       setMessage('');
     }
   };
@@ -462,9 +462,9 @@ const CampfireApp = () => {
                     {messages.map((msg, idx) => (
                       <div
                         key={idx}
-                        className={`flex ${msg.username === currentUser.name ? 'justify-end' : 'justify-start'}`}
+                        className={`flex ${msg.username === currentUser.username ? 'justify-end' : 'justify-start'}`}
                       >
-                        <div className={`max-w-xs lg:max-w-md ${msg.username === currentUser.name ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-800'} rounded-lg px-4 py-2`}>
+                        <div className={`max-w-xs lg:max-w-md ${msg.username === currentUser.username ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-800'} rounded-lg px-4 py-2`}>
                           <p className="text-xs font-semibold mb-1 opacity-75">{msg.username}</p>
                           <p className="text-sm">{msg.message}</p>
                         </div>

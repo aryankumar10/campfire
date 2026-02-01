@@ -1,10 +1,11 @@
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const roomSchema = new mongoose.Schema(
   {
     name: { 
       type: String,
-      required: true 
+      required: true ,
+      unique: true
     },
     
     // Optional Project Mapping
@@ -13,7 +14,8 @@ const roomSchema = new mongoose.Schema(
     project: { 
       type: mongoose.Schema.Types.ObjectId, 
       ref: 'Project',
-      required: false 
+      required: false ,
+      default: null
     },
 
     // Access Control

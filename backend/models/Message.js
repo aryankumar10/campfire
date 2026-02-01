@@ -1,9 +1,9 @@
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const messageSchema = new mongoose.Schema({
   project: { 
     type: mongoose.Schema.Types.ObjectId, ref: 'Project', 
-    required: true 
+    required: false 
   },
   room_id: { 
     type: mongoose.Schema.Types.ObjectId, ref: 'Room', 
