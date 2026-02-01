@@ -6,6 +6,7 @@ import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 
 import authRoutes from './routes/authRoutes.js';
+import projectRoutes from './routes/projectRoutes.js';
 import User from './models/User.js';
 import Room from './models/Room.js';
 import Message from './models/Message.js';
@@ -17,6 +18,7 @@ const server = createServer(app);
 app.use(cors());
 app.use(express.json())
 app.use('/api/auth', authRoutes);
+app.use('/api/projects', projectRoutes);
 
 // DB Connection
 mongoose.connect(process.env.MONGO_URI)
@@ -68,14 +70,23 @@ io.on('connection', (socket) => {
   socket.on('joinRoom', async ({ roomId, username }, callback) => {
     try {
       // Check DB to ensure room actually exists
-      const roomInDb = await Room.findOne({ name: roomId });
+      // Try to find by ID first, then by name
+      let roomInDb;
+      if (mongoose.Types.ObjectId.isValid(roomId)) {
+        roomInDb = await Room.findById(roomId);
+      } 
+      
+      if (!roomInDb) {
+        roomInDb = await Room.findOne({ name: roomId });
+      }
 
       if (!roomInDb) {
         socket.emit('roomNotFound', { roomId });
         return callback?.({ ok: false, error: 'Room not found in database' });
       }
 
-      socket.join(roomId);
+      const actualRoomId = roomInDb._id.toString();
+      socket.join(actualRoomId);
 
       // Fetch message history
       const messages = await Message.find({room_id: roomInDb._id})
@@ -89,16 +100,16 @@ io.on('connection', (socket) => {
         timestamp: msg.createdAt
       }));
 
-      socket.emit('roomJoined', { roomId, history });
+      socket.emit('roomJoined', { roomId: actualRoomId, roomName: roomInDb.name, history });
 
       // Notify others
-      socket.to(roomId).emit('message', {
+      socket.to(actualRoomId).emit('message', {
         username: 'System',
         message: `${username} joined the room`,
         timestamp: new Date()
       });
 
-      callback?.({ ok: true, roomId });
+      callback?.({ ok: true, roomId: actualRoomId });
     } 
     catch (err) {
       console.error(err);
@@ -109,7 +120,14 @@ io.on('connection', (socket) => {
   // Handle chat messages
   socket.on('chatMessage', async ({ roomId, message, username }) => {
     try {
-      const room = await Room.findOne({ name: roomId });
+      let room;
+      if (mongoose.Types.ObjectId.isValid(roomId)) {
+        room = await Room.findById(roomId);
+      }
+      if (!room) {
+        room = await Room.findOne({ name: roomId });
+      }
+
       const user = await User.findOne({ username });
       if (!room || !user) {
         return;   // return error msg
@@ -130,7 +148,7 @@ io.on('connection', (socket) => {
         message: message,
         timestamp: newMsg.createdAt
       };
-      io.to(roomId).emit('message', messageData);
+      io.to(room._id.toString()).emit('message', messageData);
     } 
     catch (err) {
       console.error("Message Error:", err);
@@ -138,17 +156,24 @@ io.on('connection', (socket) => {
   });
 
   // Leave room
-  socket.on('leaveRoom', ({ roomId, username }) => {
-    socket.leave(roomId);
-    console.log(`Client left room: ${roomId}`);
+  socket.on('leaveRoom', async ({ roomId, username }) => {
+    let actualRoomId = roomId;
+    if (mongoose.Types.ObjectId.isValid(roomId)) {
+       actualRoomId = roomId;
+    } else {
+       const room = await Room.findOne({ name: roomId });
+       if (room) actualRoomId = room._id.toString();
+    }
+
+    socket.leave(actualRoomId);
+    console.log(`Client left room: ${actualRoomId}`);
 
     const systemMessage = {
       username: 'System',
       message: `${username || 'A user'} left the room`,
       timestamp: new Date()
     };
-    socket.to(roomId).emit('message', systemMessage);
-
+    socket.to(actualRoomId).emit('message', systemMessage);
   });
 
   // Disconnect

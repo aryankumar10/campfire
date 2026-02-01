@@ -30,6 +30,17 @@ const CampfireApp = () => {
   const [showRoomModal, setShowRoomModal] = useState(false);
   const [modalMode, setModalMode] = useState(''); // 'create' or 'join'
   const [roomError, setRoomError] = useState('');
+  const [roomName, setRoomName] = useState('');
+  
+  // Projects states
+  const [projects, setProjects] = useState([]);
+  const [selectedProject, setSelectedProject] = useState(null);
+  const [showCreateProjectModal, setShowCreateProjectModal] = useState(false);
+  const [newProjectTitle, setNewProjectTitle] = useState('');
+  const [newProjectDesc, setNewProjectDesc] = useState('');
+  const [showCreateRoomModal, setShowCreateRoomModal] = useState(false);
+  const [newRoomName, setNewRoomName] = useState('');
+
   const messagesEndRef = useRef(null);
   const logoutTimerRef = useRef(null);
 
@@ -52,8 +63,9 @@ const CampfireApp = () => {
         setMessages((prev) => [...prev, msg]);
       });
 
-      newSocket.on('roomJoined', ({ roomId: joinedRoom, history }) => {
+      newSocket.on('roomJoined', ({ roomId: joinedRoom, roomName: name, history }) => {
         setCurrentRoom(joinedRoom);
+        setRoomName(name || joinedRoom);
         setMessages(history || []);
         setShowRoomModal(false);
         setRoomError('');
@@ -174,9 +186,95 @@ const CampfireApp = () => {
 
   const handleLeaveRoom = () => {
     if (socket && currentRoom) {
-      socket.emit('leaveRoom', { roomId: currentRoom });
+      socket.emit('leaveRoom', { roomId: currentRoom, username: currentUser.username });
       setCurrentRoom('');
+      setRoomName('');
       setMessages([]);
+    }
+  };
+
+  const fetchProjects = async () => {
+    const token = localStorage.getItem('token');
+    try {
+      const response = await fetch(`http://localhost:${PORT}/api/projects`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await response.json();
+      if (response.ok) setProjects(data);
+    } catch (err) {
+      console.error('Fetch projects error:', err);
+    }
+  };
+
+  const fetchProjectDetails = async (id) => {
+    const token = localStorage.getItem('token');
+    try {
+      const response = await fetch(`http://localhost:${PORT}/api/projects/${id}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await response.json();
+      if (response.ok) setSelectedProject(data);
+    } catch (err) {
+      console.error('Fetch project details error:', err);
+    }
+  };
+
+  const handleCreateProject = async () => {
+    const token = localStorage.getItem('token');
+    try {
+      const response = await fetch(`http://localhost:${PORT}/api/projects`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ title: newProjectTitle, description: newProjectDesc })
+      });
+      if (response.ok) {
+        setShowCreateProjectModal(false);
+        setNewProjectTitle('');
+        setNewProjectDesc('');
+        fetchProjects();
+      }
+    } catch (err) {
+      console.error('Create project error:', err);
+    }
+  };
+
+  const handleCreateRoomInProject = async () => {
+    const token = localStorage.getItem('token');
+    try {
+      const response = await fetch(`http://localhost:${PORT}/api/projects/${selectedProject._id}/rooms`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ name: newRoomName })
+      });
+      if (response.ok) {
+        setShowCreateRoomModal(false);
+        setNewRoomName('');
+        fetchProjectDetails(selectedProject._id);
+      }
+    } catch (err) {
+      console.error('Create room error:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (isLoggedIn && activeFeature === 'projects') {
+      fetchProjects();
+    }
+  }, [isLoggedIn, activeFeature]);
+
+  const handleJoinProjectRoom = (roomId) => {
+    if (socket && currentUser) {
+      socket.emit('joinRoom', { roomId, username: currentUser.name }, (res) => {
+        if (res && res.ok) {
+          setActiveFeature('chat');
+        }
+      });
     }
   };
 
@@ -185,7 +283,7 @@ const CampfireApp = () => {
     { id: 'zoom', name: 'Video Call', icon: Video, color: 'bg-green-500', available: false },
     { id: 'github', name: 'GitHub', icon: Github, color: 'bg-purple-500', available: false },
     { id: 'todo', name: 'Todo Lists', icon: ListTodo, color: 'bg-orange-500', available: false },
-    { id: 'projects', name: 'Projects', icon: Folder, color: 'bg-pink-500', available: false }
+    { id: 'projects', name: 'Projects', icon: Folder, color: 'bg-pink-500', available: true }
   ];
 
   // collapsed when sidebar closed
