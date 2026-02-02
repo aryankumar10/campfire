@@ -1,5 +1,5 @@
 import express from 'express';
-import { createProject, getProjects, getProjectById, createRoomInProject, updateProject, deleteProject, addMember, removeMember } from '../controllers/ProjectController.js';
+import { createProject, getProjects, getProjectById, createRoomInProject, updateProject, deleteProject, addMember, removeMember, addRoomAllowedMember, removeRoomAllowedMember } from '../controllers/ProjectController.js';
 import auth from '../middleware/auth.js';
 
 const router = express.Router();
@@ -12,5 +12,7 @@ router.put('/:id', auth, updateProject);
 router.delete('/:id', auth, deleteProject);
 router.post('/:id/members', auth, addMember);
 router.delete('/:id/members/:memberId', auth, removeMember);
+router.post('/:projectId/rooms/:roomId/allowed', auth, addRoomAllowedMember);
+router.delete('/:projectId/rooms/:roomId/allowed/:userId', auth, removeRoomAllowedMember);
 
 export default router;

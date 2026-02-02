@@ -7,9 +7,11 @@ import dotenv from 'dotenv';
 
 import authRoutes from './routes/authRoutes.js';
 import projectRoutes from './routes/projectRoutes.js';
+import usersRoutes from './routes/usersRoutes.js';
 import User from './models/User.js';
 import Room from './models/Room.js';
 import Message from './models/Message.js';
+import Project from './models/Project.js';
 
 dotenv.config();
 const app = express();
@@ -19,6 +21,7 @@ app.use(cors());
 app.use(express.json())
 app.use('/api/auth', authRoutes);
 app.use('/api/projects', projectRoutes);
+app.use('/api/users', usersRoutes);
 
 // DB Connection
 mongoose.connect(process.env.MONGO_URI)
@@ -83,6 +86,31 @@ io.on('connection', (socket) => {
       if (!roomInDb) {
         socket.emit('roomNotFound', { roomId });
         return callback?.({ ok: false, error: 'Room not found in database' });
+      }
+
+      // Find the user attempting to join
+      const user = await User.findOne({ username });
+      if (!user) {
+        return callback?.({ ok: false, error: 'User not found' });
+      }
+
+      // Enforce allowed_members if present
+      if (roomInDb.allowed_members && roomInDb.allowed_members.length > 0) {
+        const allowed = roomInDb.allowed_members.some(id => id.toString() === user._id.toString());
+        if (!allowed) {
+          return callback?.({ ok: false, error: 'Not allowed to join this room' });
+        }
+      }
+
+      // If the room belongs to a project, ensure the user is a project member
+      if (roomInDb.project) {
+        const project = await Project.findById(roomInDb.project);
+        if (project) {
+          const isMember = project.members.some(m => m.user.toString() === user._id.toString());
+          if (!isMember) {
+            return callback?.({ ok: false, error: 'You must be a project member to join this room' });
+          }
+        }
       }
 
       const actualRoomId = roomInDb._id.toString();

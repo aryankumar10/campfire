@@ -34,7 +34,12 @@ export const getProjectById = async (req, res) => {
       .populate('members.user', 'username name')
       .populate({
         path: 'rooms',
-        model: 'Room'
+        model: 'Room',
+        populate: {
+          path: 'allowed_members',
+          model: 'User',
+          select: 'username name'
+        }
       });
     if (!project) return res.status(404).json({ message: 'Project not found' });
     res.json(project);
@@ -157,3 +162,56 @@ export const removeMember = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+  // Add allowed member to a room (only project Owner)
+  export const addRoomAllowedMember = async (req, res) => {
+    try {
+      const { projectId, roomId } = req.params;
+      const { userId } = req.body;
+
+      const project = await Project.findById(projectId);
+      if (!project) return res.status(404).json({ message: 'Project not found' });
+
+      const isOwner = project.created_by && project.created_by.toString() === req.user.id;
+      if (!isOwner) return res.status(403).json({ message: 'Unauthorized' });
+
+      const room = await Room.findById(roomId);
+      if (!room) return res.status(404).json({ message: 'Room not found' });
+
+      if (room.project && room.project.toString() !== projectId) return res.status(400).json({ message: 'Room does not belong to project' });
+
+      const user = await User.findById(userId);
+      if (!user) return res.status(404).json({ message: 'User not found' });
+
+      const already = room.allowed_members.some(id => id.toString() === userId);
+      if (already) return res.status(400).json({ message: 'User already allowed' });
+
+      room.allowed_members.push(userId);
+      await room.save();
+      res.status(201).json(room);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  };
+
+  // Remove allowed member from a room (only project Owner)
+  export const removeRoomAllowedMember = async (req, res) => {
+    try {
+      const { projectId, roomId, userId } = req.params;
+
+      const project = await Project.findById(projectId);
+      if (!project) return res.status(404).json({ message: 'Project not found' });
+
+      const isOwner = project.created_by && project.created_by.toString() === req.user.id;
+      if (!isOwner) return res.status(403).json({ message: 'Unauthorized' });
+
+      const room = await Room.findById(roomId);
+      if (!room) return res.status(404).json({ message: 'Room not found' });
+
+      room.allowed_members = room.allowed_members.filter(id => id.toString() !== userId);
+      await room.save();
+      res.json(room);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  };

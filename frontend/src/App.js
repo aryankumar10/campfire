@@ -40,6 +40,10 @@ const CampfireApp = () => {
   const [newProjectDesc, setNewProjectDesc] = useState('');
   const [showCreateRoomModal, setShowCreateRoomModal] = useState(false);
   const [newRoomName, setNewRoomName] = useState('');
+  const [showManageRoomModal, setShowManageRoomModal] = useState(false);
+  const [manageRoom, setManageRoom] = useState(null);
+  const [manageUsername, setManageUsername] = useState('');
+  const [inviteUsername, setInviteUsername] = useState('');
 
   const messagesEndRef = useRef(null);
   const logoutTimerRef = useRef(null);
@@ -216,6 +220,122 @@ const CampfireApp = () => {
       if (response.ok) setSelectedProject(data);
     } catch (err) {
       console.error('Fetch project details error:', err);
+    }
+  };
+
+  const isOwnerOf = (project) => {
+    if (!project || !currentUser) return false;
+    const createdBy = project.created_by;
+    if (!createdBy) return false;
+    return (createdBy.toString ? createdBy.toString() === currentUser.id : createdBy === currentUser.id);
+  };
+
+  const handleInviteProjectMember = async () => {
+    const token = localStorage.getItem('token');
+    if (!inviteUsername || inviteUsername.trim().length === 0) return alert('Enter username');
+    try {
+      const ures = await fetch(`http://localhost:${PORT}/api/users?q=${encodeURIComponent(inviteUsername.trim())}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const users = await ures.json();
+      if (!ures.ok || !users || users.length === 0) return alert('User not found');
+      const userId = users[0]._id;
+      const pres = await fetch(`http://localhost:${PORT}/api/projects/${selectedProject._id}/members`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ userId })
+      });
+      const pdata = await pres.json();
+      if (pres.ok) {
+        setInviteUsername('');
+        setSelectedProject(pdata);
+      } else {
+        alert(pdata.message || 'Failed to add member');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Failed to add member');
+    }
+  };
+
+  const handleRemoveProjectMember = async (memberId) => {
+    const token = localStorage.getItem('token');
+    try {
+      const res = await fetch(`http://localhost:${PORT}/api/projects/${selectedProject._id}/members/${memberId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setSelectedProject(data);
+      } else {
+        alert(data.message || 'Failed to remove');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Failed to remove member');
+    }
+  };
+
+  const openManageRoomModal = (room) => {
+    setManageRoom(room);
+    setManageUsername('');
+    setShowManageRoomModal(true);
+  };
+
+  const handleAddRoomAllowedMember = async () => {
+    const token = localStorage.getItem('token');
+    if (!manageUsername || manageUsername.trim() === '') return alert('Enter username');
+    try {
+      const ures = await fetch(`http://localhost:${PORT}/api/users?q=${encodeURIComponent(manageUsername.trim())}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const users = await ures.json();
+      if (!ures.ok || !users || users.length === 0) return alert('User not found');
+      const userId = users[0]._id;
+      const res = await fetch(`http://localhost:${PORT}/api/projects/${selectedProject._id}/rooms/${manageRoom._id}/allowed`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ userId })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        // refresh project details
+        const pRes = await fetchProjectDetails(selectedProject._id);
+        // update manageRoom from latest project
+        const updated = await (await fetch(`http://localhost:${PORT}/api/projects/${selectedProject._id}`, { headers: { 'Authorization': `Bearer ${token}` } })).json();
+        setSelectedProject(updated);
+        const newRoom = updated.rooms.find(r => r._id === manageRoom._id);
+        setManageRoom(newRoom);
+        setManageUsername('');
+      } else {
+        alert(data.message || 'Failed to add allowed user');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Failed to add allowed user');
+    }
+  };
+
+  const handleRemoveRoomAllowedMember = async (userId) => {
+    const token = localStorage.getItem('token');
+    try {
+      const res = await fetch(`http://localhost:${PORT}/api/projects/${selectedProject._id}/rooms/${manageRoom._id}/allowed/${userId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const updated = await (await fetch(`http://localhost:${PORT}/api/projects/${selectedProject._id}`, { headers: { 'Authorization': `Bearer ${token}` } })).json();
+        setSelectedProject(updated);
+        const newRoom = updated.rooms.find(r => r._id === manageRoom._id);
+        setManageRoom(newRoom);
+      } else {
+        alert(data.message || 'Failed to remove allowed user');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Failed to remove allowed user');
     }
   };
 
@@ -510,7 +630,7 @@ const CampfireApp = () => {
             {currentRoom && activeFeature === 'chat' && (
               <div className="flex items-center space-x-2 px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-medium">
                 <Hash className="w-4 h-4" />
-                <span>{currentRoom}</span>
+                <span>{roomName || currentRoom}</span>
               </div>
             )}
           </div>
@@ -678,6 +798,31 @@ const CampfireApp = () => {
                     </div>
 
                     <div className="flex-1 overflow-y-auto">
+                      <h3 className="text-lg font-semibold mb-2">Members</h3>
+                      <div className="mb-4">
+                        <div className="space-y-2">
+                          {selectedProject.members && selectedProject.members.map((m) => (
+                            <div key={m.user._id || m.user} className="flex items-center justify-between p-2 border rounded-md">
+                              <div className="text-sm">
+                                <div className="font-medium">{m.user.name || m.user.username}</div>
+                                <div className="text-xs text-gray-400">@{m.user.username}</div>
+                              </div>
+                              <div>
+                                {(isOwnerOf(selectedProject) || (currentUser && currentUser.id === (m.user._id || m.user))) && (
+                                  <button onClick={() => handleRemoveProjectMember(m.user._id || m.user)} className="px-2 py-1 text-sm border rounded">Remove</button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        {isOwnerOf(selectedProject) && (
+                          <div className="mt-3 flex items-center space-x-2">
+                            <input value={inviteUsername} onChange={(e) => setInviteUsername(e.target.value)} placeholder="username to invite" className="flex-1 px-3 py-2 border rounded" />
+                            <button onClick={handleInviteProjectMember} className="px-3 py-2 bg-blue-500 text-white rounded">Invite</button>
+                          </div>
+                        )}
+                      </div>
+
                       <h3 className="text-lg font-semibold mb-2">Rooms</h3>
                       {(!selectedProject.rooms || selectedProject.rooms.length === 0) && (
                         <div className="text-sm text-gray-500 mb-4">No rooms yet for this project.</div>
@@ -696,6 +841,9 @@ const CampfireApp = () => {
                               >
                                 Join
                               </button>
+                              {isOwnerOf(selectedProject) && (
+                                <button onClick={() => openManageRoomModal(r)} className="px-3 py-1 border rounded-lg text-sm">Manage</button>
+                              )}
                               <button
                                 onClick={() => { navigator.clipboard?.writeText(r._id); }}
                                 className="px-3 py-1 border rounded-lg text-sm"
@@ -833,6 +981,40 @@ const CampfireApp = () => {
               >
                 Create Room
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manage Room Modal */}
+      {showManageRoomModal && manageRoom && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md">
+            <h3 className="text-xl font-bold text-gray-800 mb-4">Manage Room: {manageRoom.name}</h3>
+            <p className="text-gray-600 mb-4 text-sm">Allowed members for this room.</p>
+            <div className="space-y-2 mb-4">
+              {(manageRoom.allowed_members && manageRoom.allowed_members.length > 0) ? (
+                manageRoom.allowed_members.map((u) => (
+                  <div key={u._id} className="flex items-center justify-between p-2 border rounded">
+                    <div>
+                      <div className="font-medium">{u.name}</div>
+                      <div className="text-xs text-gray-400">@{u.username}</div>
+                    </div>
+                    <div>
+                      <button onClick={() => handleRemoveRoomAllowedMember(u._id)} className="px-2 py-1 border rounded text-sm">Remove</button>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-sm text-gray-500">No allowed members — room is public to project members.</div>
+              )}
+            </div>
+            <div className="flex items-center space-x-2 mb-4">
+              <input value={manageUsername} onChange={(e) => setManageUsername(e.target.value)} placeholder="username to allow" className="flex-1 px-3 py-2 border rounded" />
+              <button onClick={handleAddRoomAllowedMember} className="px-3 py-2 bg-blue-500 text-white rounded">Allow</button>
+            </div>
+            <div className="flex space-x-2">
+              <button onClick={() => setShowManageRoomModal(false)} className="flex-1 px-4 py-2 border rounded">Close</button>
             </div>
           </div>
         </div>
