@@ -1,8 +1,10 @@
 import logger from '../utils/logger.js';
+import { Request, Response } from 'express';
+import { Server, Socket } from 'socket.io';
 
 // In-memory runtime store for chat room IDs and messages (testing only)
-export const rooms = [];
-export const messages = {};
+export const rooms: string[] = [];
+export const messages: Record<string, any[]> = {};
 
 export function generateRoomId() {
     return Math.random().toString(36).substring(2, 9);
@@ -13,12 +15,12 @@ export function generateMessageId() {
 }
 
 // Register socket handlers on an existing Socket.IO Server instance
-export function registerSocketHandlers(io) {
-    io.on('connection', (socket) => {
+export function registerSocketHandlers(io: Server) {
+    io.on('connection', (socket: Socket) => {
         logger.info('User Connected:', socket.id);
 
         // user joining a specific chat room (expects room id string)
-        socket.on('join_room', (roomId, callback) => {
+        socket.on('join_room', (roomId: string, callback: any) => {
             if (!rooms.includes(roomId)) {
                 if (typeof callback === 'function') callback({ ok: false, error: 'Room not found' });
                 return;
@@ -33,8 +35,8 @@ export function registerSocketHandlers(io) {
 
         // send msg
         // expects data: { room, text, meta? }
-        socket.on('send_message', (data, callback) => {
-            const room = data && (data.room || data.roomId);
+        socket.on('send_message', (data: any, callback: any) => {
+            const room: string = data && (data.room || data.roomId);
             if (!room || !rooms.includes(room)) {
                 if (typeof callback === 'function') callback({ ok: false, error: 'Room not found' });
                 return;
@@ -62,12 +64,12 @@ export function registerSocketHandlers(io) {
 }
 
 // Express route handlers (runtime-only testing)
-export function listRoomsHandler(req, res) {
+export function listRoomsHandler(req: Request, res: Response) {
     res.json({ rooms });
 }
 
-export function createRoomHandler(io) {
-    return (req, res) => {
+export function createRoomHandler(io: Server) {
+    return (req: Request, res: Response) => {
         let { id } = req.body || {};
         if (!id) {
             id = generateRoomId();
@@ -84,14 +86,14 @@ export function createRoomHandler(io) {
     };
 }
 
-export function joinRoomDebugHandler(req, res) {
-    const { id } = req.params;
+export function joinRoomDebugHandler(req: Request, res: Response) {
+    const id = req.params.id as string;
     if (!rooms.includes(id)) return res.status(404).json({ error: 'Room not found' });
     res.json({ ok: true, id });
 }
 
-export function getMessagesHandler(req, res) {
-    const { id } = req.params;
+export function getMessagesHandler(req: Request, res: Response) {
+    const id = req.params.id as string;
     if (!rooms.includes(id)) return res.status(404).json({ error: 'Room not found' });
     res.json({ messages: messages[id] || [] });
 }
