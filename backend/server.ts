@@ -9,6 +9,7 @@ import authRoutes from './routes/authRoutes.js';
 import User from './models/User.js';
 import Room from './models/Room.js';
 import Message from './models/Message.js';
+import { encryptMessage, decryptMessage } from './utils/encryption.js';
 
 dotenv.config();
 const app = express();
@@ -19,7 +20,7 @@ app.use(express.json())
 app.use('/api/auth', authRoutes);
 
 // DB Connection
-mongoose.connect(process.env.MONGO_URI)
+mongoose.connect(process.env.MONGO_URI as string)
   .then(() => console.log('✅ MongoDB Connected'))
   .catch((err) => console.error('❌ MongoDB Connection Error:', err));
 
@@ -84,8 +85,8 @@ io.on('connection', (socket) => {
       
       // Format for Frontend
       const history = messages.map(msg => ({
-        username: msg.sender ? msg.sender.username : 'Unknown',
-        message: msg.content,
+        username: msg.sender ? (msg.sender as any).username : 'Unknown',
+        message: decryptMessage(msg.content),
         timestamp: msg.createdAt
       }));
 
@@ -119,7 +120,7 @@ io.on('connection', (socket) => {
       const newMsg = new Message({
         room_id: room._id,
         sender: user._id,
-        content: message,
+        content: encryptMessage(message),
         project: room.project // null for non project rooms
       });
       await newMsg.save();

@@ -35,12 +35,12 @@ function timestamp() {
 }
 
 const logger = {
-    info: (...args) => console.log(`${colors.fg.blue}[INFO ${timestamp()}]${colors.reset}`, ...args),
-    success: (...args) => console.log(`${colors.fg.green}[OK   ${timestamp()}]${colors.reset}`, ...args),
-    warn: (...args) => console.warn(`${colors.fg.yellow}[WARN ${timestamp()}]${colors.reset}`, ...args),
-    error: (...args) => console.error(`${colors.fg.red}[ERR  ${timestamp()}]${colors.reset}`, ...args),
-    debug: (...args) => console.debug(`${colors.fg.magenta}[DBG  ${timestamp()}]${colors.reset}`, ...args),
-    room: (...args) => console.log(`${colors.fg.cyan}[ROOM ${timestamp()}]${colors.reset}`, ...args),
+    info: (...args: any[]) => console.log(`${colors.fg.blue}[INFO ${timestamp()}]${colors.reset}`, ...args),
+    success: (...args: any[]) => console.log(`${colors.fg.green}[OK   ${timestamp()}]${colors.reset}`, ...args),
+    warn: (...args: any[]) => console.warn(`${colors.fg.yellow}[WARN ${timestamp()}]${colors.reset}`, ...args),
+    error: (...args: any[]) => console.error(`${colors.fg.red}[ERR  ${timestamp()}]${colors.reset}`, ...args),
+    debug: (...args: any[]) => console.debug(`${colors.fg.magenta}[DBG  ${timestamp()}]${colors.reset}`, ...args),
+    room: (...args: any[]) => console.log(`${colors.fg.cyan}[ROOM ${timestamp()}]${colors.reset}`, ...args),
 };
 
 export default logger;

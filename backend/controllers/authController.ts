@@ -1,9 +1,9 @@
 import User from '../models/User.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { Request, Response } from 'express';
 
-
-export const login = async (req, res) => {
+export const login = async (req: Request, res: Response) => {
   try {
     const { username, password } = req.body;
 
@@ -42,7 +42,7 @@ export const login = async (req, res) => {
       }
     });
 
-  } catch (err) {
+  } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 };
