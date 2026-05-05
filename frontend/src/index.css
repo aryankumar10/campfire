@@ -89,3 +89,37 @@ button:focus-visible {
     background-color: #f9f9f9;
   }
 } */
+
+@layer utilities {
+  .soft-gradient-bg {
+    @apply bg-gradient-to-br from-slate-50 to-blue-50/50 min-h-screen text-slate-800;
+  }
+  
+  .glass-panel {
+    @apply bg-white/70 backdrop-blur-md border border-white/40 shadow-xl;
+  }
+  
+  .glass-panel-dark {
+    @apply bg-slate-900/80 backdrop-blur-lg border-r border-slate-700/50 shadow-2xl;
+  }
+  
+  .animated-gradient-bg {
+    @apply bg-gradient-to-r from-blue-500 to-emerald-500 bg-[length:200%_200%] animate-gradient;
+  }
+}
+
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+  }
+}
+
+@keyframes gradient {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.animate-gradient {
+  animation: gradient 5s ease infinite;
+}
