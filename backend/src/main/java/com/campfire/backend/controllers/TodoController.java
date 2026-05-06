@@ -13,6 +13,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -37,8 +38,15 @@ public class TodoController {
     public ResponseEntity<?> getTodos(@PathVariable String projectId) {
         try {
             Project project = projectRepository.findById(projectId).orElse(null);
-            if (project == null || project.getMembers().stream().noneMatch(m -> m.getUser().getId().equals(getUserId()))) {
-                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", "Not authorized"));
+            if (project == null) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", "Project not found"));
+            }
+
+            // All project members can view the todo list
+            boolean isMember = project.getMembers().stream()
+                    .anyMatch(m -> m.getUser().getId().equals(getUserId()));
+            if (!isMember) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", "Not a member of this project"));
             }
 
             List<Todo> todos = todoRepository.findByProjectId(projectId);
@@ -53,6 +61,7 @@ public class TodoController {
         private String title;
         private String description;
         private String assigned_to;
+        private String priority;
     }
 
     @PostMapping("/{projectId}")
@@ -75,6 +84,7 @@ public class TodoController {
                 assignedToId = currentUserId;
             }
 
+            // Role-based assignment check
             if (!assignedToId.equals(currentUserId)) {
                 if ("Member".equals(userRole)) {
                     return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", "Members can only assign tasks to themselves"));
@@ -93,12 +103,16 @@ public class TodoController {
             }
 
             User assignedUser = userRepository.findById(assignedToId).orElse(null);
+            User assigningUser = userRepository.findById(currentUserId).orElse(null);
 
             Todo todo = new Todo();
             todo.setProject(project);
             todo.setTitle(request.getTitle());
             todo.setDescription(request.getDescription());
             todo.setAssigned_to(assignedUser);
+            todo.setAssigned_by(assigningUser);
+            todo.setPriority(request.getPriority() != null ? request.getPriority() : "medium");
+            todo.setCreatedAt(LocalDateTime.now());
 
             todoRepository.save(todo);
             return ResponseEntity.status(HttpStatus.CREATED).body(todo);
@@ -118,9 +132,17 @@ public class TodoController {
             Todo todo = todoRepository.findById(todoId).orElse(null);
             if (todo == null) return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", "Todo not found"));
 
-            todo.setStatus(request.getStatus());
-            todoRepository.save(todo);
+            String newStatus = request.getStatus();
+            todo.setStatus(newStatus);
 
+            // Track completion time
+            if ("done".equals(newStatus)) {
+                todo.setCompletedAt(LocalDateTime.now());
+            } else {
+                todo.setCompletedAt(null);
+            }
+
+            todoRepository.save(todo);
             return ResponseEntity.ok(todo);
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", e.getMessage()));

@@ -63,7 +63,7 @@ public class ChatWebSocketController {
             Message msg = new Message();
             msg.setRoomId(room);
             msg.setSender(user);
-            msg.setProject(room.getProject());
+            msg.setProjectId(room.getProjectId());
             msg.setContent(encryptionService.encryptMessage(payload.getMessage()));
             msg.setCreatedAt(LocalDateTime.now());
             

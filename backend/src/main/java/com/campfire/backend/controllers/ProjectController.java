@@ -70,7 +70,7 @@ public class ProjectController {
 
             Room room = new Room();
             room.setName("project-" + project.getId());
-            room.setProject(project);
+            room.setProjectId(project.getId());
             room.getAllowed_members().add(user.getId());
             roomRepository.save(room);
 

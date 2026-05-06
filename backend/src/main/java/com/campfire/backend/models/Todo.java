@@ -16,8 +16,13 @@ public class Todo {
     private Project project;
     private String title;
     private String description;
-    private String status = "todo";
+    private String status = "todo"; // "todo", "in-progress", "done"
+    private String priority = "medium"; // "low", "medium", "high", "urgent"
     @DBRef
     private User assigned_to;
+    @DBRef
+    private User assigned_by;
+    private LocalDateTime createdAt = LocalDateTime.now();
+    private LocalDateTime completedAt;
     private LocalDateTime deadline;
 }
