@@ -17,7 +17,6 @@ public class Message {
     @DBRef
     private User sender;
     private String content;
-    @DBRef
-    private Project project;
+    private String projectId;
     private LocalDateTime createdAt = LocalDateTime.now();
 }
