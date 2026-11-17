@@ -20,4 +20,11 @@ public class Message {
     @DBRef
     private Project project;
     private LocalDateTime createdAt = LocalDateTime.now();
+
+    /**
+     * S3 object key for an attached file, e.g. "uploads/roomId/uuid-photo.jpg".
+     * Null when the message has no attachment.
+     * The thumbnail lives at the same key under the "thumbnails/" prefix.
+     */
+    private String fileKey;
 }

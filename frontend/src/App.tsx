@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { MessageSquare, ListTodo, Folder, LogOut, Menu, Send, Plus, Check, Clock, Shield, Eye, EyeOff, UserPlus, Trash2 } from 'lucide-react';
+import { MessageSquare, ListTodo, Folder, LogOut, Menu, Send, Plus, Check, Clock, Shield, Eye, EyeOff, UserPlus, Trash2, Sparkles, Paperclip, X, Bot } from 'lucide-react';
 import { Client } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -37,6 +37,8 @@ interface ChatMessage {
   username: string;
   message: string;
   timestamp: string;
+  fileKey?: string;        // S3 key for an attached file (optional)
+  thumbnailUrl?: string;   // resolved presigned URL for the thumbnail (client-side only)
 }
 
 const CampfireApp: React.FC = () => {
@@ -74,6 +76,18 @@ const CampfireApp: React.FC = () => {
   // Admin Panel states
   const [userSearchResults, setUserSearchResults] = useState<User[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // AI assistant state
+  const [showAiPanel, setShowAiPanel] = useState(false);
+  const [aiMode, setAiMode] = useState<'summarize' | 'ask'>('summarize');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiResult, setAiResult] = useState('');
+  const [aiQuestion, setAiQuestion] = useState('');
+
+  // File upload state
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [uploadingFile, setUploadingFile] = useState(false);
 
   const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   useEffect(() => { scrollToBottom(); }, [messages]);
@@ -247,6 +261,135 @@ const CampfireApp: React.FC = () => {
     });
     setMessage('');
   };
+
+  const handleSummarize = async () => {
+    if (!currentRoom) return;
+    setAiLoading(true);
+    setAiResult('');
+    try {
+      const res = await fetch(`${BASE_URL}/api/ai/rooms/${currentRoom}/summarize`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      setAiResult(res.ok ? data.summary : (data.error || 'Failed to summarize.'));
+    } catch (e) {
+      setAiResult('Network error calling Bedrock.');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const handleAskQuestion = async () => {
+    if (!currentRoom || !aiQuestion.trim()) return;
+    setAiLoading(true);
+    setAiResult('');
+    try {
+      const res = await fetch(`${BASE_URL}/api/ai/rooms/${currentRoom}/ask`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ question: aiQuestion })
+      });
+      const data = await res.json();
+      setAiResult(res.ok ? data.answer : (data.error || 'Failed to get answer.'));
+    } catch (e) {
+      setAiResult('Network error calling Bedrock.');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) setPendingFile(file);
+    // Reset so the same file can be re-selected
+    e.target.value = '';
+  };
+
+  const handleSendWithFile = async () => {
+    if (!currentRoom || !stompClientRef.current || !stompClientRef.current.connected) return;
+    if (!pendingFile && !message.trim()) return;
+
+    let fileKey: string | undefined;
+
+    if (pendingFile) {
+      setUploadingFile(true);
+      try {
+        // 1. Get presigned upload URL from backend
+        const fileType = pendingFile.type || 'application/octet-stream';
+        const presignRes = await fetch(
+          `${BASE_URL}/api/files/presign?roomId=${encodeURIComponent(currentRoom)}&filename=${encodeURIComponent(pendingFile.name)}&contentType=${encodeURIComponent(fileType)}`,
+          { method: 'POST', headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (!presignRes.ok) {
+          const errData = await presignRes.json().catch(() => ({}));
+          throw new Error(errData.message || 'Could not get upload URL');
+        }
+        const { uploadUrl, fileKey: key } = await presignRes.json();
+        fileKey = key;
+
+        // 2. PUT the file directly to S3
+        const putRes = await fetch(uploadUrl, {
+          method: 'PUT',
+          body: pendingFile,
+          headers: { 'Content-Type': fileType }
+        });
+        if (!putRes.ok) {
+          throw new Error(`S3 upload failed with status ${putRes.status}`);
+        }
+      } catch (err) {
+        alert('File upload failed. Please try again.');
+        setUploadingFile(false);
+        return;
+      } finally {
+        setUploadingFile(false);
+        setPendingFile(null);
+      }
+    }
+
+    // 3. Send WebSocket message with optional fileKey
+    stompClientRef.current.publish({
+      destination: `/app/chat/${currentRoom}`,
+      body: JSON.stringify({ message: message.trim() || `📎 ${pendingFile?.name ?? 'Attachment'}`, fileKey })
+    });
+    setMessage('');
+  };
+
+  // Fetch a presigned GET URL for a thumbnail/file from the backend
+  const fetchFileUrl = async (key: string): Promise<string> => {
+    const res = await fetch(`${BASE_URL}/api/files/url?key=${encodeURIComponent(key)}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!res.ok) return '';
+    const data = await res.json();
+    return data.url || '';
+  };
+
+  const isImageFile = (key?: string) => {
+    if (!key) return false;
+    const ext = key.split('.').pop()?.toLowerCase();
+    return ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'].includes(ext || '');
+  };
+
+  useEffect(() => {
+    const unresolved = messages.filter(m => m.fileKey && !m.thumbnailUrl);
+    if (unresolved.length === 0) return;
+    unresolved.forEach(async (msg) => {
+      const key = msg.fileKey!;
+      let url = '';
+      if (isImageFile(key)) {
+        const thumbKey = key.replace('uploads/', 'thumbnails/').replace(/\.[^.]+$/, '.jpg');
+        url = await fetchFileUrl(thumbKey);
+        if (!url) url = await fetchFileUrl(key);
+      } else {
+        url = await fetchFileUrl(key);
+      }
+      setMessages(prev => prev.map(m =>
+        m === msg ? { ...m, thumbnailUrl: url } : m
+      ));
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages]);
 
   const handleCreateProject = async () => {
     try {
@@ -479,8 +622,57 @@ const CampfireApp: React.FC = () => {
                           {showRoomId && <p className="text-xs text-gray-500 bg-gray-100 inline-block px-2 py-0.5 rounded mt-1 font-mono">ID: {currentRoom}</p>}
                         </div>
                       </div>
-                      <button onClick={() => { setCurrentRoom(''); setMessages([]); }} className="text-sm text-gray-500 hover:text-red-500 font-medium transition">Leave Room</button>
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => { setShowAiPanel(!showAiPanel); setAiResult(''); setAiQuestion(''); }}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium transition ${showAiPanel ? 'bg-violet-500 text-white' : 'bg-violet-50 text-violet-600 hover:bg-violet-100 border border-violet-200'}`}
+                        >
+                          <Sparkles className="w-4 h-4" /> AI Assistant
+                        </button>
+                        <button onClick={() => { setCurrentRoom(''); setMessages([]); setShowAiPanel(false); }} className="text-sm text-gray-500 hover:text-red-500 font-medium transition">Leave Room</button>
+                      </div>
                     </div>
+
+                    {showAiPanel && (
+                      <div className="border-b border-gray-200/50 bg-violet-50/60 p-4 backdrop-blur-md">
+                        <div className="flex gap-2 mb-3">
+                          <button onClick={() => { setAiMode('summarize'); setAiResult(''); }} className={`px-3 py-1 rounded-lg text-sm font-medium transition ${aiMode === 'summarize' ? 'bg-violet-500 text-white' : 'bg-white text-gray-600 border border-gray-200'}`}>
+                            Summarize Room
+                          </button>
+                          <button onClick={() => { setAiMode('ask'); setAiResult(''); }} className={`px-3 py-1 rounded-lg text-sm font-medium transition ${aiMode === 'ask' ? 'bg-violet-500 text-white' : 'bg-white text-gray-600 border border-gray-200'}`}>
+                            Ask About Chat
+                          </button>
+                        </div>
+
+                        {aiMode === 'summarize' && (
+                          <button onClick={handleSummarize} disabled={aiLoading} className="px-4 py-2 bg-violet-500 text-white rounded-xl text-sm font-medium hover:bg-violet-600 disabled:opacity-60 transition flex items-center gap-2">
+                            {aiLoading ? "Summarizing..." : "Generate Summary"}
+                          </button>
+                        )}
+
+                        {aiMode === 'ask' && (
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={aiQuestion}
+                              onChange={e => setAiQuestion(e.target.value)}
+                              onKeyPress={e => e.key === 'Enter' && handleAskQuestion()}
+                              placeholder="e.g. Who was assigned the design task?"
+                              className="flex-1 px-3 py-2 rounded-xl border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-violet-400 bg-white/80"
+                            />
+                            <button onClick={handleAskQuestion} disabled={aiLoading || !aiQuestion.trim()} className="px-4 py-2 bg-violet-500 text-white rounded-xl text-sm font-medium hover:bg-violet-600 disabled:opacity-60 transition flex items-center gap-2">
+                              {aiLoading ? "Thinking..." : "Ask"}
+                            </button>
+                          </div>
+                        )}
+
+                        {aiResult && (
+                          <div className="mt-3 p-3 bg-white rounded-xl border border-violet-200 text-sm text-gray-700 whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto shadow-sm">
+                            {aiResult}
+                          </div>
+                        )}
+                      </div>
+                    )}
                     
                     <div className="flex-1 overflow-y-auto p-6 space-y-4">
                       {messages.map((msg, idx) => (
@@ -488,6 +680,29 @@ const CampfireApp: React.FC = () => {
                           <div className={`max-w-md p-4 rounded-2xl shadow-sm ${msg.username === currentUser?.username ? 'bg-blue-500 text-white rounded-br-sm' : 'bg-white text-gray-800 rounded-bl-sm border border-gray-100'}`}>
                             <p className="text-xs font-semibold mb-1 opacity-70">{msg.username}</p>
                             <p className="text-sm leading-relaxed">{msg.message}</p>
+                            {/* Attachment thumbnail or file link */}
+                            {msg.fileKey && (
+                              <div className="mt-2">
+                                {isImageFile(msg.fileKey) ? (
+                                  msg.thumbnailUrl ? (
+                                    <a href={msg.thumbnailUrl} target="_blank" rel="noopener noreferrer">
+                                      <img src={msg.thumbnailUrl} alt="attachment" className="rounded-lg max-h-40 object-cover border border-white/30 hover:opacity-90 transition" />
+                                    </a>
+                                  ) : (
+                                    <div className="text-xs opacity-60 italic mt-1">Loading image...</div>
+                                  )
+                                ) : (
+                                  msg.thumbnailUrl ? (
+                                    <a href={msg.thumbnailUrl} target="_blank" rel="noopener noreferrer" className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium transition ${msg.username === currentUser?.username ? 'bg-white/20 hover:bg-white/30 text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'}`}>
+                                      <Paperclip className="w-3.5 h-3.5" />
+                                      <span className="truncate max-w-[180px]">{msg.fileKey.split('-').slice(1).join('-') || 'Download attachment'}</span>
+                                    </a>
+                                  ) : (
+                                    <div className="text-xs opacity-60 italic mt-1">Loading file...</div>
+                                  )
+                                )}
+                              </div>
+                            )}
                           </div>
                         </motion.div>
                       ))}
@@ -495,10 +710,24 @@ const CampfireApp: React.FC = () => {
                     </div>
 
                     <div className="p-4 bg-white/40 border-t border-gray-200/50 backdrop-blur-md">
+                      {/* Pending file preview bar */}
+                      {pendingFile && (
+                        <div className="mb-2 flex items-center gap-2 px-3 py-2 bg-violet-50 border border-violet-200 rounded-xl text-sm text-violet-700">
+                          <Paperclip className="w-4 h-4 shrink-0" />
+                          <span className="truncate flex-1">{pendingFile.name}</span>
+                          <button onClick={() => setPendingFile(null)} className="hover:text-red-500 transition"><X className="w-4 h-4" /></button>
+                        </div>
+                      )}
                       <div className="flex gap-2">
-                        <input type="text" value={message} onChange={(e) => setMessage(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && sendMessage()} placeholder="Type a message..." className="flex-1 px-5 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white/80 transition" />
-                        <button onClick={sendMessage} className="px-6 bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition flex items-center justify-center shadow-md">
-                          <Send className="w-5 h-5" />
+                        {/* Hidden file input */}
+                        <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileSelect} />
+                        {/* Attachment button */}
+                        <button onClick={() => fileInputRef.current?.click()} className="px-3 bg-gray-100 text-gray-500 rounded-xl hover:bg-gray-200 transition" title="Attach file">
+                          <Paperclip className="w-5 h-5" />
+                        </button>
+                        <input type="text" value={message} onChange={(e) => setMessage(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleSendWithFile()} placeholder="Type a message..." className="flex-1 px-5 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none bg-white/80 transition" />
+                        <button onClick={handleSendWithFile} disabled={uploadingFile} className="px-6 bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition flex items-center justify-center shadow-md disabled:opacity-60">
+                          {uploadingFile ? <span className="animate-spin text-sm">⏳</span> : <Send className="w-5 h-5" />}
                         </button>
                       </div>
                     </div>

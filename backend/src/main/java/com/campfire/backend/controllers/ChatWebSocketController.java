@@ -41,6 +41,8 @@ public class ChatWebSocketController {
     @Data
     public static class ChatMessagePayload {
         private String message;
+        /** Optional S3 key for an attached file, e.g. "uploads/roomId/uuid-photo.jpg" */
+        private String fileKey;
     }
 
     @MessageMapping("/chat/{roomId}")
@@ -66,13 +68,20 @@ public class ChatWebSocketController {
             msg.setProject(room.getProject());
             msg.setContent(encryptionService.encryptMessage(payload.getMessage()));
             msg.setCreatedAt(LocalDateTime.now());
-            
+            // Persist the S3 file key if an attachment was included
+            if (payload.getFileKey() != null && !payload.getFileKey().trim().isEmpty()) {
+                msg.setFileKey(payload.getFileKey());
+            }
             messageRepository.save(msg);
 
             Map<String, Object> outgoing = new HashMap<>();
             outgoing.put("username", user.getUsername());
             outgoing.put("message", payload.getMessage());
             outgoing.put("timestamp", msg.getCreatedAt());
+            // Broadcast the fileKey so other clients can fetch the thumbnail/download URL
+            if (msg.getFileKey() != null) {
+                outgoing.put("fileKey", msg.getFileKey());
+            }
 
             messagingTemplate.convertAndSend("/topic/room." + roomId, outgoing);
         } catch (Exception e) {
