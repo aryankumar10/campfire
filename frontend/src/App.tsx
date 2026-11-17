@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { MessageSquare, ListTodo, Folder, LogOut, Menu, Send, Plus, Check, Clock, Shield, Eye, EyeOff, UserPlus, Trash2, Sparkles, Paperclip, X, Bot } from 'lucide-react';
+import { MessageSquare, ListTodo, Folder, LogOut, Menu, Send, Plus, Check, Clock, Shield, Eye, EyeOff, UserPlus, Trash2, Sparkles, Paperclip, X } from 'lucide-react';
 import { Client } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -42,18 +42,22 @@ interface ChatMessage {
 }
 
 const CampfireApp: React.FC = () => {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [token, setToken] = useState<string>(() => localStorage.getItem('token') || '');
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => !!localStorage.getItem('token'));
+  const [currentUser, setCurrentUser] = useState<User | null>(() => {
+    const saved = localStorage.getItem('user');
+    try { return saved ? JSON.parse(saved) : null; } catch { return null; }
+  });
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [activeFeature, setActiveFeature] = useState('chat');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [token, setToken] = useState(localStorage.getItem('token') || '');
 
   // Chat states
   const stompClientRef = useRef<Client | null>(null);
-  const [currentRoom, setCurrentRoom] = useState('');
+  const [isWsConnected, setIsWsConnected] = useState(false);
+  const [currentRoom, setCurrentRoom] = useState<string>(() => localStorage.getItem('currentRoom') || '');
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [showRoomModal, setShowRoomModal] = useState(false);
@@ -149,30 +153,38 @@ const CampfireApp: React.FC = () => {
         reconnectDelay: 5000,
         onConnect: () => {
           console.log('Connected to STOMP');
+          setIsWsConnected(true);
+        },
+        onDisconnect: () => {
+          setIsWsConnected(false);
         },
         onStompError: (frame) => {
           console.error('Broker reported error: ' + frame.headers['message']);
+          setIsWsConnected(false);
         }
       });
       
       client.activate();
       stompClientRef.current = client;
 
-      return () => { client.deactivate(); };
+      return () => {
+        setIsWsConnected(false);
+        client.deactivate();
+      };
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoggedIn, token]);
 
   // Subscribe to current room changes
   useEffect(() => {
-    if (stompClientRef.current && stompClientRef.current.connected && currentRoom) {
+    if (stompClientRef.current && isWsConnected && currentRoom) {
       const subscription = stompClientRef.current.subscribe(`/topic/room.${currentRoom}`, (msg) => {
         const chatMsg: ChatMessage = JSON.parse(msg.body);
         setMessages((prev) => [...prev, chatMsg]);
       });
       return () => subscription.unsubscribe();
     }
-  }, [currentRoom, stompClientRef.current?.connected]);
+  }, [currentRoom, isWsConnected]);
 
   const handleLogin = async (e?: React.SyntheticEvent) => {
     if (e) e.preventDefault();
@@ -200,28 +212,22 @@ const CampfireApp: React.FC = () => {
     if (stompClientRef.current) stompClientRef.current.deactivate();
     setIsLoggedIn(false); setCurrentUser(null); setToken(''); setUsername(''); setPassword('');
     setActiveFeature('chat'); setCurrentRoom(''); setMessages([]);
+    localStorage.removeItem('currentRoom');
     localStorage.clear();
   };
 
-  useEffect(() => {
-    const savedToken = localStorage.getItem('token');
-    const savedUser = localStorage.getItem('user');
-    if (savedToken && savedUser) {
-      try { setCurrentUser(JSON.parse(savedUser)); setToken(savedToken); setIsLoggedIn(true); } 
-      catch (e) { localStorage.clear(); }
-    }
-  }, []);
-
-  const handleCreateOrJoinRoom = async (idOverride?: string) => {
+  const handleCreateOrJoinRoom = async (idOverride?: string, tokenOverride?: string) => {
     const id = idOverride || roomIdInput.trim();
     if (!id) return;
     setRoomError('');
+
+    const activeToken = tokenOverride || token || localStorage.getItem('token') || '';
 
     try {
       if (modalMode === 'create' && !idOverride) {
         const createRes = await fetch(`${BASE_URL}/api/chat/rooms`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${activeToken}` },
           body: JSON.stringify({ roomId: id })
         });
         if (!createRes.ok) {
@@ -232,20 +238,22 @@ const CampfireApp: React.FC = () => {
 
       const joinRes = await fetch(`${BASE_URL}/api/chat/rooms/${id}/join`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${activeToken}` }
       });
       const data = await joinRes.json();
       
       if (!joinRes.ok) {
         setRoomError(data.message || 'Failed to join. Are you authorized?');
         if (idOverride) alert(data.message || 'Failed to join. Are you authorized?');
+        localStorage.removeItem('currentRoom');
         return;
       }
 
       setCurrentRoom(data.roomId);
+      localStorage.setItem('currentRoom', data.roomId);
       setMessages(data.history || []);
       setShowRoomModal(false);
-      fetchUserData(token);
+      fetchUserData(activeToken);
       setActiveFeature('chat');
       setShowRoomId(false);
     } catch (e) {
@@ -253,14 +261,24 @@ const CampfireApp: React.FC = () => {
     }
   };
 
-  const sendMessage = () => {
-    if (!message.trim() || !currentRoom || !stompClientRef.current || !stompClientRef.current.connected) return;
-    stompClientRef.current.publish({
-      destination: `/app/chat/${currentRoom}`,
-      body: JSON.stringify({ message: message.trim() })
-    });
-    setMessage('');
-  };
+  useEffect(() => {
+    const savedToken = localStorage.getItem('token');
+    const savedUser = localStorage.getItem('user');
+    const savedRoom = localStorage.getItem('currentRoom');
+    if (savedToken && savedUser) {
+      try {
+        setCurrentUser(JSON.parse(savedUser));
+        setToken(savedToken);
+        setIsLoggedIn(true);
+        if (savedRoom) {
+          handleCreateOrJoinRoom(savedRoom, savedToken);
+        }
+      } catch (e) {
+        console.error('Error restoring session:', e);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSummarize = async () => {
     if (!currentRoom) return;
@@ -374,20 +392,33 @@ const CampfireApp: React.FC = () => {
   useEffect(() => {
     const unresolved = messages.filter(m => m.fileKey && !m.thumbnailUrl);
     if (unresolved.length === 0) return;
-    unresolved.forEach(async (msg) => {
-      const key = msg.fileKey!;
-      let url = '';
-      if (isImageFile(key)) {
-        const thumbKey = key.replace('uploads/', 'thumbnails/').replace(/\.[^.]+$/, '.jpg');
-        url = await fetchFileUrl(thumbKey);
-        if (!url) url = await fetchFileUrl(key);
-      } else {
-        url = await fetchFileUrl(key);
-      }
-      setMessages(prev => prev.map(m =>
-        m === msg ? { ...m, thumbnailUrl: url } : m
-      ));
+
+    let isMounted = true;
+    Promise.all(
+      unresolved.map(async (msg) => {
+        const key = msg.fileKey!;
+        let url = '';
+        if (isImageFile(key)) {
+          const thumbKey = key.replace('uploads/', 'thumbnails/').replace(/\.[^.]+$/, '.jpg');
+          url = await fetchFileUrl(thumbKey);
+          if (!url) url = await fetchFileUrl(key);
+        } else {
+          url = await fetchFileUrl(key);
+        }
+        return { fileKey: key, url };
+      })
+    ).then((resolved) => {
+      if (!isMounted) return;
+      const urlMap = new Map(resolved.map(r => [r.fileKey, r.url]));
+      setMessages(prev =>
+        prev.map(m => m.fileKey && urlMap.has(m.fileKey) && !m.thumbnailUrl
+          ? { ...m, thumbnailUrl: urlMap.get(m.fileKey) }
+          : m
+        )
+      );
     });
+
+    return () => { isMounted = false; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages]);
 
@@ -629,7 +660,7 @@ const CampfireApp: React.FC = () => {
                         >
                           <Sparkles className="w-4 h-4" /> AI Assistant
                         </button>
-                        <button onClick={() => { setCurrentRoom(''); setMessages([]); setShowAiPanel(false); }} className="text-sm text-gray-500 hover:text-red-500 font-medium transition">Leave Room</button>
+                        <button onClick={() => { setCurrentRoom(''); setMessages([]); setShowAiPanel(false); localStorage.removeItem('currentRoom'); }} className="text-sm text-gray-500 hover:text-red-500 font-medium transition">Leave Room</button>
                       </div>
                     </div>
 

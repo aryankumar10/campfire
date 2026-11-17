@@ -89,6 +89,9 @@ public class ChatRestController {
                 map.put("username", msg.getSender() != null ? msg.getSender().getUsername() : "Unknown");
                 map.put("message", encryptionService.decryptMessage(msg.getContent()));
                 map.put("timestamp", msg.getCreatedAt());
+                if (msg.getFileKey() != null && !msg.getFileKey().trim().isEmpty()) {
+                    map.put("fileKey", msg.getFileKey());
+                }
                 return map;
             }).collect(Collectors.toList());
 
